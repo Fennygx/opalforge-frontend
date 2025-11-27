@@ -1,0 +1,144 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head> 
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.jsdelivr.net;">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpalForge</title>
+  <meta name="description" content="OpalForge - Unbreakable Luxury Authentication">
+     <link rel="shortcut icon" href="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/user_686fc65f1156a835d07fd85c/65241c302_favicon-16x16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/user_686fc65f1156a835d07fd85c/3d9be57dc_favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/user_686fc65f1156a835d07fd85c/65241c302_favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/user_686fc65f1156a835d07fd85c/f1399bc88_apple-touch-icon.png">
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <style>
+    *{box-sizing:border-box}
+    :root{
+      --snow:#f9f9f9;
+      --navy:#000040;
+      --gold:#B8860B;
+      --silver:#C0C0C0;
+    }
+    html,body{height:100%}
+    body{
+      margin:0;padding:0;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Poppins,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;color:var(--navy);
+      background:linear-gradient(180deg,var(--snow) 60%,var(--navy) 40%);background-size:200% 200%;animation:gradientShift 20s ease infinite;overflow:hidden
+    }
+    @keyframes gradientShift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+    .logo-intro{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;font-size:3rem;font-weight:700;background:linear-gradient(90deg,var(--silver),var(--gold));-webkit-background-clip:text;-webkit-text-fill-color:transparent;opacity:0;pointer-events:none;animation:fadeInLogo 2.2s ease forwards,fadeOutLogo 2s ease 3.6s forwards}
+    @keyframes fadeInLogo{from{opacity:0;transform:translate(-50%,-62%)}to{opacity:1;transform:translate(-50%,-50%)}}@keyframes fadeOutLogo{from{opacity:1}to{opacity:0;visibility:hidden}}
+    .glow{position:absolute;width:520px;height:520px;border-radius:50%;filter:blur(120px);background:radial-gradient(circle,rgba(184,134,11,0.4),transparent 60%);left:10%;top:10%;transform:translate(-10%,-10%);animation:pulse 8s infinite alternate;z-index:1}
+    @keyframes pulse{0%{transform:scale(.95);opacity:.6}100%{transform:scale(1.45);opacity:.9}}
+    .container{position:relative;z-index:10;max-width:720px;padding:3rem;border-radius:20px;background:rgba(255,255,255,.86);backdrop-filter:blur(18px);border:1px solid rgba(192,192,192,.35);box-shadow:0 10px 40px rgba(11,26,75,.06);text-align:center;opacity:0;transform:translateY(24px);animation:fadeInContainer .9s ease 3.8s forwards}
+    @keyframes fadeInContainer{to{opacity:1;transform:none}}h1{font-size:2.6rem;margin:0 0 .25rem;font-weight:800;background:linear-gradient(90deg,var(--silver),var(--gold));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:.6px}
+    p{margin:.25rem 0 1.75rem;color:#1f2a4d;font-size:1.05rem}
+    .controls{display:flex;gap:1rem;justify-content:center;align-items:center}
+    #upload{appearance:none;padding:12px 28px;border-radius:999px;border:none;background:linear-gradient(90deg,var(--gold),var(--silver));color:var(--navy);font-weight:600;font-size:1rem;cursor:pointer;box-shadow:0 8px 28px rgba(184,134,11,.12);transition:transform .22s ease,box-shadow .22s ease}
+    #upload:focus{outline:3px solid rgba(184,134,11,.12)}#upload:hover{transform:translateY(-3px);box-shadow:0 18px 40px rgba(184,134,11,.16)}
+    #output{margin-top:1.75rem;font-size:1.15rem;font-weight:700;color:var(--navy);text-shadow:0 0 6px rgba(192,192,192,.28)}
+    #loader{margin-top:.6rem;color:var(--gold)}footer{position:absolute;bottom:18px;font-size:.9rem;color:#ffffff;z-index:100;text-shadow:0 1px 3px rgba(0,0,0,.3)}
+    .preview{margin-top:1rem;border-radius:12px;overflow:hidden;width:240px;height:160px;display:inline-block;box-shadow:0 6px 18px rgba(11,26,75,.06)}
+    .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  </style>
+</head>
+<body>
+  <div class="logo-intro" id="logoIntro">OpalForge</div>
+  <div class="glow" role="presentation"></div>
+  <main class="container" role="main" aria-labelledby="brandTitle">
+    <h1 id="brandTitle">OpalForge</h1>
+    <p>Forged in Fire. Proven in Truth.</p>
+    <div class="controls">
+      <label for="upload" id="uploadLabel">
+        <input id="fileInput" type="file" accept="image/*" class="sr-only">
+        <button id="upload" type="button" aria-describedby="uploadLabelDesc">Upload Image</button>
+      </label>
+    </div>
+    <div class="preview" id="imgPreview" hidden></div>
+    <div id="output" aria-live="polite">Initializing…</div>
+    <div id="loader" aria-hidden="true">Please wait…</div>
+  </main>
+  <footer>© 2025 OpalForge — Precision Authenticated.</footer>
+
+  <script>
+    const output = document.getElementById('output');
+    const loader = document.getElementById('loader');
+    const uploadButton = document.getElementById('upload');
+    const fileInput = document.getElementById('fileInput');
+    const imgPreview = document.getElementById('imgPreview');
+    loader.style.display = 'none';
+
+    let model = null;
+
+    async function loadModel(){
+      loader.style.display = 'block';
+      output.textContent = 'Loading model...';
+      try{
+        const m = await tf.loadLayersModel('./model.json');
+        model = m;
+        loader.style.display = 'none';
+        output.textContent = 'Model loaded. Upload an image to start.';
+      }catch(err){
+        loader.style.display = 'none';
+        output.textContent = 'Error loading model. Ensure model.json and weights are hosted and accessible via HTTP(S).';
+      }
+    }
+
+    async function predictImage(imgElement){
+      try{
+        const imgTensor = tf.browser.fromPixels(imgElement);
+        const resized = tf.image.resizeBilinear(imgTensor,[224,224]);
+        const normalized = resized.toFloat().div(255).expandDims(0);
+        const logits = model.predict(normalized);
+        const data = await logits.data();
+        const confidence = Math.max(...data)*100;
+        imgTensor.dispose();resized.dispose();normalized.dispose();
+        if(logits.dispose) logits.dispose();
+        return confidence;
+      }catch(e){
+        throw e;
+      }
+    }
+
+    function showPreview(dataUrl){
+      imgPreview.hidden = false;imgPreview.innerHTML = '';
+      const img = new Image();img.src = dataUrl;img.alt = 'Uploaded preview';img.style.width='100%';img.style.height='100%';img.style.objectFit='cover';imgPreview.appendChild(img);
+    }
+
+    uploadButton.addEventListener('click',()=>fileInput.click());
+
+    fileInput.addEventListener('change',async(e)=>{
+      const file = e.target.files && e.target.files[0];
+      if(!file){output.textContent='No file selected.';return}
+      if(!model){output.textContent='Model not loaded yet...';return}
+      loader.style.display='block';output.textContent='Processing image...';
+      const reader = new FileReader();
+      reader.onload = async(ev)=>{
+        const dataUrl = ev.target.result;
+        showPreview(dataUrl);
+        const img = new Image();img.src = dataUrl;img.onload = async()=>{
+          try{
+            const conf = await predictImage(img);
+            output.textContent = `Confidence: ${conf.toFixed(2)}% Replica`;
+          }catch(err){output.textContent='Error processing image.'}
+          loader.style.display='none';
+        };
+        img.onerror = ()=>{loader.style.display='none';output.textContent='Error loading image.'};
+      };
+      reader.onerror=()=>{loader.style.display='none';output.textContent='Error reading file.'};
+      reader.readAsDataURL(file);
+    });
+
+    window.addEventListener('load',async()=>{
+      await loadModel();
+    });
+
+    document.addEventListener('mousemove',e=>{
+      const xRatio = e.clientX/window.innerWidth;const yRatio = e.clientY/window.innerHeight;
+      const xPos = Math.round(xRatio*100);const yPos = Math.round(yRatio*100);
+      document.body.style.background = `linear-gradient(180deg,var(--snow) 60%, var(--navy) 40%), radial-gradient(circle at ${xPos}% ${yPos}%, rgba(184,134,11,0.06), transparent 15%)`;
+    });
+  </script>
+</body>
+</html>
