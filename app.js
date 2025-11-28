@@ -1,182 +1,178 @@
-// =========================================================
-// SECTION A: TENSORFLOW AI MODEL LOGIC (Existing Code)
-// =========================================================
+// --- Configuration ---
+// Define the URL for your Cloudflare Worker API.
+const WORKER_URL = 'https://opalforge-cert-gen.garcia-fenny.workers.dev';
 
-// Global Elements
+// --- DOM Element References ---
 const output = document.getElementById('output');
 const loader = document.getElementById('loader');
 const uploadButton = document.getElementById('upload');
 const fileInput = document.getElementById('fileInput');
 const imgPreview = document.getElementById('imgPreview');
-loader.style.display = 'none';
 
+const certIdInput = document.getElementById('certIdInput');
+const generateButton = document.getElementById('generateButton');
+const statusMessage = document.getElementById('statusMessage');
+
+// Initial state
+loader.style.display = 'none';
 let model = null;
 
+// --- AI Model Loading Functions ---
+
+/**
+ * Loads the TensorFlow.js model from the specified path.
+ */
 async function loadModel() {
     loader.style.display = 'block';
-    output.textContent = 'Loading model...';
+    output.textContent = 'Loading AI model...';
     try {
-const m = await tf.loadLayersModel('./model/model.json'); 
+        // CRITICAL FIX: The path is now correctly set to 'model/model.json'
+        const m = await tf.loadLayersModel('./model/model.json');
         model = m;
         loader.style.display = 'none';
-        output.textContent = 'Model loaded. Upload an image to start.';
+        output.textContent = 'AI Model loaded. Upload an image for authentication.';
     } catch (err) {
+        console.error('Model loading error:', err);
         loader.style.display = 'none';
-        output.textContent = 'Error loading model. Ensure model.json and weights are hosted and accessible via HTTP(S).';
+        output.textContent = 'Error loading model. Ensure model/model.json and weights are hosted and accessible via HTTP(S).';
     }
 }
 
+/**
+ * Runs the uploaded image through the loaded model for prediction.
+ * @param {HTMLImageElement} imgElement - The image element to predict.
+ * @returns {Promise<number>} - The confidence score (as a percentage).
+ */
 async function predictImage(imgElement) {
-    try {
+    // Wrap the prediction logic in tf.tidy to clean up Tensors immediately
+    return tf.tidy(() => {
         const imgTensor = tf.browser.fromPixels(imgElement);
         const resized = tf.image.resizeBilinear(imgTensor, [224, 224]);
-        const normalized = resized.toFloat().div(255).expandDims(0);
+        const normalized = resized.toFloat().div(255).expandDims(0); // [1, 224, 224, 3]
+
         const logits = model.predict(normalized);
-        const data = await logits.data();
+        const data = logits.dataSync(); // Use dataSync for synchronous read inside tidy
         const confidence = Math.max(...data) * 100;
-        imgTensor.dispose(); resized.dispose(); normalized.dispose();
-        if (logits.dispose) logits.dispose();
+        
         return confidence;
-    } catch (e) {
-        throw e;
-    }
+    });
 }
 
+/**
+ * Displays the uploaded image in the preview box.
+ * @param {string} dataUrl - Base64 encoded image data.
+ */
 function showPreview(dataUrl) {
-    imgPreview.hidden = false; imgPreview.innerHTML = '';
-    const img = new Image(); img.src = dataUrl; img.alt = 'Uploaded preview'; img.style.width = '100%'; img.style.height = '100%'; img.style.objectFit = 'cover'; imgPreview.appendChild(img);
+    imgPreview.hidden = false;
+    imgPreview.innerHTML = '';
+    const img = new Image();
+    img.src = dataUrl;
+    img.alt = 'Uploaded preview';
+    img.style.width = '100%';
+    img.style.height = '100%';
+    img.style.objectFit = 'cover';
+    imgPreview.appendChild(img);
 }
 
+// --- Certificate Verification/Download Functions ---
 
-// =========================================================
-// SECTION B: CERTIFICATE GENERATION LOGIC (New Code)
-// =========================================================
-
-const WORKER_URL = 'https://opalforge-cert-gen.garcia-fenny.workers.dev';
-
-async function generateCertificatePDF() {
-    const certIdInput = document.getElementById('certIdInput');
-    const statusMessage = document.getElementById('statusMessage'); 
-    
-    // 1. Input Validation and Feedback
+/**
+ * Calls the Cloudflare Worker API to download the certificate PDF.
+ */
+async function downloadCertificate() {
     const certId = certIdInput.value.trim();
     if (!certId) {
         statusMessage.textContent = 'Please enter a Certificate ID.';
-        statusMessage.style.color = 'red';
         return;
     }
-    
-    statusMessage.textContent = 'Generating certificate... Please wait.';
-    statusMessage.style.color = '#00c6ff'; // Light blue for progress
-    
+
+    statusMessage.textContent = 'Searching for certificate...';
+    generateButton.disabled = true;
+
     try {
-        // 2. Worker API Call (POST request)
-        const response = await fetch(WORKER_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/pdf'
-            },
-            body: JSON.stringify({
-                certificate_id: certId
-            })
-        });
+        const url = `${WORKER_URL}/certificate/${certId}`;
+        const response = await fetch(url, { method: 'GET' });
 
-        // 3. Error Handling and Response Check
-        if (response.status === 400) {
-            const errorJson = await response.json();
-            throw new Error(`Invalid Request: ${errorJson.message}`);
-        }
-        if (!response.ok) {
+        if (response.ok) {
+            // Success: Handle the file download
+            const blob = await response.blob();
+            const filename = `opalforge_certificate_${certId}.pdf`;
+            
+            // Create a temporary link element to trigger the download
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            statusMessage.textContent = `Success! Downloading certificate for ID: ${certId}.`;
+        } else {
+            // Error handling based on response status
             const errorText = await response.text();
-            // Try to parse the error message from the worker, otherwise use status text
-            let displayError = response.statusText;
-            try {
-                const errorJson = JSON.parse(errorText);
-                if (errorJson.message) displayError = errorJson.message;
-            } catch (e) {
-                // If parsing failed, use the response status text
-            }
-            throw new Error(`PDF Generation Failed: ${displayError}`);
+            statusMessage.textContent = `Error: Certificate ID ${certId} not found or invalid. (${response.status})`;
+            console.error('API Error:', errorText);
         }
-
-        // 4. Download Trigger (Success)
-        const pdfBlob = await response.blob();
-        
-        // Extract filename from the Content-Disposition header
-        let filename = `OpalForge_Cert_${certId}.pdf`; 
-        const disposition = response.headers.get('Content-Disposition');
-        if (disposition && disposition.indexOf('filename=') !== -1) {
-            // Clean up the quotes from the header value
-            filename = disposition.split('filename=')[1].replace(/"/g, '');
-        }
-
-        // Trigger the download
-        const url = window.URL.createObjectURL(pdfBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url); 
-
-        statusMessage.textContent = `Certificate successfully generated and downloaded!`;
-        statusMessage.style.color = '#00ffaa'; 
-
     } catch (error) {
-        // 5. Final Error Feedback to User
-        console.error('Certificate Generation Error:', error);
-        statusMessage.textContent = `ERROR: ${error.message}`;
-        statusMessage.style.color = 'red';
+        statusMessage.textContent = 'Network error or Worker is unavailable.';
+        console.error('Fetch error:', error);
+    } finally {
+        generateButton.disabled = false;
     }
 }
 
 
-// =========================================================
-// SECTION C: EVENT LISTENERS (Both Features)
-// =========================================================
+// --- Event Listeners ---
 
-// Existing AI Model Listeners
+// 1. Image Upload Trigger
 uploadButton.addEventListener('click', () => fileInput.click());
+
+// 2. Image File Selection and Prediction
 fileInput.addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
-    if (!file) { output.textContent = 'No file selected.'; return }
-    if (!model) { output.textContent = 'Model not loaded yet...'; return }
-    loader.style.display = 'block'; output.textContent = 'Processing image...';
+    if (!file) { output.textContent = 'No file selected.'; return; }
+    if (!model) { output.textContent = 'Model not loaded yet. Please wait...'; return; }
+
+    loader.style.display = 'block';
+    output.textContent = 'Processing image...';
+
     const reader = new FileReader();
     reader.onload = async (ev) => {
         const dataUrl = ev.target.result;
         showPreview(dataUrl);
-        const img = new Image(); img.src = dataUrl; img.onload = async () => {
+
+        const img = new Image();
+        img.src = dataUrl;
+        img.onload = async () => {
             try {
                 const conf = await predictImage(img);
                 output.textContent = `Confidence: ${conf.toFixed(2)}% Replica`;
-            } catch (err) { output.textContent = 'Error processing image.' }
+            } catch (err) {
+                console.error('Prediction error:', err);
+                output.textContent = 'Error processing image.';
+            }
             loader.style.display = 'none';
         };
-        img.onerror = () => { loader.style.display = 'none'; output.textContent = 'Error loading image.' };
+        img.onerror = () => { loader.style.display = 'none'; output.textContent = 'Error loading image.'; };
     };
-    reader.onerror = () => { loader.style.display = 'none'; output.textContent = 'Error reading file.' };
+    reader.onerror = () => { loader.style.display = 'none'; output.textContent = 'Error reading file.'; };
     reader.readAsDataURL(file);
 });
 
+// 3. Certificate Download Trigger
+generateButton.addEventListener('click', downloadCertificate);
 
-// New Certificate Listener (Attached to the new button)
-document.addEventListener('DOMContentLoaded', () => {
-    const generateButton = document.getElementById('generateButton');
-    if (generateButton) {
-        generateButton.addEventListener('click', generateCertificatePDF);
-    }
-});
 
-// Existing Load and Mousemove Listeners
+// 4. Initialization on Load
 window.addEventListener('load', async () => {
     await loadModel();
 });
 
+// 5. Mousemove effect for background glow
 document.addEventListener('mousemove', e => {
-    const xRatio = e.clientX / window.innerWidth; const yRatio = e.clientY / window.innerHeight;
-    const xPos = Math.round(xRatio * 100); const yPos = Math.round(yRatio * 100);
+    const xRatio = e.clientX / window.innerWidth;
+    const yRatio = e.clientY / window.innerHeight;
+    const xPos = Math.round(xRatio * 100);
+    const yPos = Math.round(yRatio * 100);
     document.body.style.background = `linear-gradient(180deg,var(--snow) 60%, var(--navy) 40%), radial-gradient(circle at ${xPos}% ${yPos}%, rgba(184,134,11,0.06), transparent 15%)`;
 });
