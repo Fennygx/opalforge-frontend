@@ -16,7 +16,7 @@ async function loadModel() {
     loader.style.display = 'block';
     output.textContent = 'Loading model...';
     try {
-        const m = await tf.loadLayersModel('./model.json');
+const m = await tf.loadLayersModel('./model/model.json'); 
         model = m;
         loader.style.display = 'none';
         output.textContent = 'Model loaded. Upload an image to start.';
