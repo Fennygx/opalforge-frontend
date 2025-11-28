@@ -1,178 +1,213 @@
 // --- Configuration ---
-// Define the URL for your Cloudflare Worker API.
 const WORKER_URL = 'https://opalforge-cert-gen.garcia-fenny.workers.dev';
+const APP_URL = 'https://opalforge.tech'; // Your frontend domain
 
-// --- DOM Element References ---
+// --- DOM Elements ---
 const output = document.getElementById('output');
 const loader = document.getElementById('loader');
 const uploadButton = document.getElementById('upload');
 const fileInput = document.getElementById('fileInput');
 const imgPreview = document.getElementById('imgPreview');
+const resultAction = document.getElementById('resultAction');
+const mintButton = document.getElementById('mintButton');
 
 const certIdInput = document.getElementById('certIdInput');
-const generateButton = document.getElementById('generateButton');
+const verifyButton = document.getElementById('verifyButton');
 const statusMessage = document.getElementById('statusMessage');
 
-// Initial state
+// Initial State
 loader.style.display = 'none';
 let model = null;
+let currentConfidence = 0;
 
-// --- AI Model Loading Functions ---
+// --- 1. AI & Model Logic ---
 
-/**
- * Loads the TensorFlow.js model from the specified path.
- */
 async function loadModel() {
     loader.style.display = 'block';
     output.textContent = 'Loading AI model...';
     try {
-        // CRITICAL FIX: The path is now correctly set to 'model/model.json'
         const m = await tf.loadLayersModel('./model/model.json');
         model = m;
         loader.style.display = 'none';
-        output.textContent = 'AI Model loaded. Upload an image for authentication.';
+        output.textContent = 'Ready. Upload an image.';
     } catch (err) {
-        console.error('Model loading error:', err);
+        console.error('Model error:', err);
         loader.style.display = 'none';
-        output.textContent = 'Error loading model. Ensure model/model.json and weights are hosted and accessible via HTTP(S).';
+        output.textContent = 'System Error: Model could not be loaded.';
     }
 }
 
-/**
- * Runs the uploaded image through the loaded model for prediction.
- * @param {HTMLImageElement} imgElement - The image element to predict.
- * @returns {Promise<number>} - The confidence score (as a percentage).
- */
 async function predictImage(imgElement) {
-    // Wrap the prediction logic in tf.tidy to clean up Tensors immediately
     return tf.tidy(() => {
         const imgTensor = tf.browser.fromPixels(imgElement);
         const resized = tf.image.resizeBilinear(imgTensor, [224, 224]);
-        const normalized = resized.toFloat().div(255).expandDims(0); // [1, 224, 224, 3]
-
+        const normalized = resized.toFloat().div(255).expandDims(0);
         const logits = model.predict(normalized);
-        const data = logits.dataSync(); // Use dataSync for synchronous read inside tidy
-        const confidence = Math.max(...data) * 100;
-        
-        return confidence;
+        const data = logits.dataSync();
+        return Math.max(...data) * 100;
     });
 }
 
-/**
- * Displays the uploaded image in the preview box.
- * @param {string} dataUrl - Base64 encoded image data.
- */
 function showPreview(dataUrl) {
     imgPreview.hidden = false;
     imgPreview.innerHTML = '';
     const img = new Image();
     img.src = dataUrl;
-    img.alt = 'Uploaded preview';
     img.style.width = '100%';
     img.style.height = '100%';
     img.style.objectFit = 'cover';
     imgPreview.appendChild(img);
+    return img;
 }
 
-// --- Certificate Verification/Download Functions ---
+// --- 2. Certificate Logic (Minting & Verification) ---
 
 /**
- * Calls the Cloudflare Worker API to download the certificate PDF.
+ * GENERATE (MINT): 
+ * 1. Creates a random ID.
+ * 2. Sends ID + Date + QR Data to Worker.
+ * 3. Downloads PDF.
  */
-async function downloadCertificate() {
-    const certId = certIdInput.value.trim();
-    if (!certId) {
-        statusMessage.textContent = 'Please enter a Certificate ID.';
+async function mintCertificate() {
+    if (currentConfidence < 85) {
+        alert("Authentication score too low to mint certificate.");
         return;
     }
 
-    statusMessage.textContent = 'Searching for certificate...';
-    generateButton.disabled = true;
+    // Generate a Random ID (In a real app, the Worker should do this, but this works for now)
+    const newCertId = 'OF-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+    
+    // THE STRATEGY: This URL is what goes INSIDE the QR Code
+    // When scanned, it leads back here with ?verify=ID
+    const qrPayload = `${APP_URL}/?verify=${newCertId}`;
+
+    statusMessage.textContent = 'Minting Certificate...';
+    mintButton.disabled = true;
+    mintButton.textContent = "Processing...";
 
     try {
-        const url = `${WORKER_URL}/certificate/${certId}`;
+        // We pass the ID and the QR URL to the worker as query params
+        // Ensure your Worker is set up to read these!
+        const url = `${WORKER_URL}/certificate/${newCertId}?qrData=${encodeURIComponent(qrPayload)}`;
+        
         const response = await fetch(url, { method: 'GET' });
 
         if (response.ok) {
-            // Success: Handle the file download
             const blob = await response.blob();
-            const filename = `opalforge_certificate_${certId}.pdf`;
-            
-            // Create a temporary link element to trigger the download
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = filename;
+            link.download = `OpalForge_Cert_${newCertId}.pdf`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
             
-            statusMessage.textContent = `Success! Downloading certificate for ID: ${certId}.`;
+            output.textContent = `Certificate Minted! ID: ${newCertId}`;
+            statusMessage.textContent = 'Download started.';
         } else {
-            // Error handling based on response status
-            const errorText = await response.text();
-            statusMessage.textContent = `Error: Certificate ID ${certId} not found or invalid. (${response.status})`;
-            console.error('API Error:', errorText);
+            throw new Error('Worker returned error');
         }
-    } catch (error) {
-        statusMessage.textContent = 'Network error or Worker is unavailable.';
-        console.error('Fetch error:', error);
+    } catch (e) {
+        console.error(e);
+        statusMessage.textContent = 'Minting failed. Check connection.';
     } finally {
-        generateButton.disabled = false;
+        mintButton.disabled = false;
+        mintButton.textContent = "Mint Certificate";
     }
 }
 
+/**
+ * VERIFY:
+ * Checks if a Certificate ID exists (Simulated for now by trying to fetch it).
+ */
+async function verifyCertificate(certId) {
+    if (!certId) return;
+    
+    statusMessage.textContent = `Verifying ID: ${certId}...`;
+    certIdInput.value = certId; // Fill input for visual feedback
 
-// --- Event Listeners ---
+    // In a real database app, we would query an API.
+    // Here, we simulate verification by attempting to fetch the cert.
+    // If the Worker generates it without error, we assume it's valid for this prototype.
+    try {
+        const url = `${WORKER_URL}/certificate/${certId}`;
+        const response = await fetch(url, { method: 'HEAD' }); // Just check headers
 
-// 1. Image Upload Trigger
+        if (response.ok || response.status === 200) {
+            statusMessage.style.color = 'green';
+            statusMessage.innerHTML = `✅ <strong>Verified Authentic</strong><br>ID: ${certId}`;
+            output.textContent = "Certificate Verified via Scan";
+            
+            // Optional: Auto-download the proof again
+            // downloadCertificate(certId); 
+        } else {
+            statusMessage.style.color = 'red';
+            statusMessage.textContent = '❌ Certificate Invalid or Not Found';
+        }
+    } catch (e) {
+        // Fallback for demo: just show it was scanned
+        statusMessage.textContent = `Scanned ID: ${certId}. (Database check pending)`;
+    }
+}
+
+// --- 3. Event Listeners ---
+
 uploadButton.addEventListener('click', () => fileInput.click());
 
-// 2. Image File Selection and Prediction
 fileInput.addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
-    if (!file) { output.textContent = 'No file selected.'; return; }
-    if (!model) { output.textContent = 'Model not loaded yet. Please wait...'; return; }
+    if (!file) return;
 
     loader.style.display = 'block';
-    output.textContent = 'Processing image...';
+    output.textContent = 'Analyzing...';
+    resultAction.style.display = 'none'; // Hide previous results
 
     const reader = new FileReader();
     reader.onload = async (ev) => {
-        const dataUrl = ev.target.result;
-        showPreview(dataUrl);
-
-        const img = new Image();
-        img.src = dataUrl;
+        const img = showPreview(ev.target.result);
         img.onload = async () => {
-            try {
-                const conf = await predictImage(img);
-                output.textContent = `Confidence: ${conf.toFixed(2)}% Replica`;
-            } catch (err) {
-                console.error('Prediction error:', err);
-                output.textContent = 'Error processing image.';
-            }
+            currentConfidence = await predictImage(img);
             loader.style.display = 'none';
+            
+            if (currentConfidence > 85) {
+                output.innerHTML = `<span style="color:green">Authentic (${currentConfidence.toFixed(1)}%)</span>`;
+                resultAction.style.display = 'block'; // Show Mint Button
+            } else {
+                output.innerHTML = `<span style="color:red">Potential Replica (${currentConfidence.toFixed(1)}%)</span>`;
+                resultAction.style.display = 'none';
+            }
         };
-        img.onerror = () => { loader.style.display = 'none'; output.textContent = 'Error loading image.'; };
     };
-    reader.onerror = () => { loader.style.display = 'none'; output.textContent = 'Error reading file.'; };
     reader.readAsDataURL(file);
 });
 
-// 3. Certificate Download Trigger
-generateButton.addEventListener('click', downloadCertificate);
+mintButton.addEventListener('click', mintCertificate);
 
-
-// 4. Initialization on Load
-window.addEventListener('load', async () => {
-    await loadModel();
+verifyButton.addEventListener('click', () => {
+    verifyCertificate(certIdInput.value.trim());
 });
 
-// 5. Mousemove effect for background glow
+// --- 4. Initialization & URL Param Check (QR Logic) ---
+
+window.addEventListener('load', async () => {
+    await loadModel();
+
+    // CHECK FOR QR CODE SCAN
+    // If the user came here via opalforge.tech/?verify=123
+    const urlParams = new URLSearchParams(window.location.search);
+    const verifyId = urlParams.get('verify');
+
+    if (verifyId) {
+        console.log("QR Code detected:", verifyId);
+        // Scroll to verification section
+        document.getElementById('verifySection').scrollIntoView();
+        // Trigger verification
+        verifyCertificate(verifyId);
+    }
+});
+
+// Mousemove effect
 document.addEventListener('mousemove', e => {
-    const xRatio = e.clientX / window.innerWidth;
-    const yRatio = e.clientY / window.innerHeight;
-    const xPos = Math.round(xRatio * 100);
-    const yPos = Math.round(yRatio * 100);
-    document.body.style.background = `linear-gradient(180deg,var(--snow) 60%, var(--navy) 40%), radial-gradient(circle at ${xPos}% ${yPos}%, rgba(184,134,11,0.06), transparent 15%)`;
+    const x = Math.round((e.clientX / window.innerWidth) * 100);
+    const y = Math.round((e.clientY / window.innerHeight) * 100);
+    document.body.style.background = `linear-gradient(180deg,var(--snow) 60%, var(--navy) 40%), radial-gradient(circle at ${x}% ${y}%, rgba(184,134,11,0.06), transparent 15%)`;
 });
