@@ -1,0 +1,20 @@
+# ----------------------------------------------------------------------
+# System and Environment Files
+# ----------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ----------------------------------------------------------------------
+# Placeholder files (we only need the directory, not the file itself)
+# ----------------------------------------------------------------------
+.gitkeep
+
+# ----------------------------------------------------------------------
+# Dependencies and Builds (For Future Proofing)
+# ----------------------------------------------------------------------
+# Ignore node_modules if you ever introduce npm/yarn for dev tools
+node_modules/
+# Ignore common build directories if you add a build step
+dist/
+build/
