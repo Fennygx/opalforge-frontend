@@ -1,6 +1,6 @@
 // --- Configuration ---
 const WORKER_URL = 'https://api.opalforge.tech';
-const APP_URL = 'https://opalforge.tech'; // Your frontend domain
+const APP_URL = 'https://opalforge.tech';
 
 // --- DOM Elements ---
 const output = document.getElementById('output');
@@ -20,33 +20,83 @@ loader.style.display = 'none';
 let model = null;
 let currentConfidence = 0;
 
-// --- 1. AI & Model Logic ---
+// --- CRITICAL FIX: Model Loading & Prediction ---
 
 async function loadModel() {
     loader.style.display = 'block';
     output.textContent = 'Loading AI model...';
     try {
-        // IMPORTANT: Ensure your model files are in a /model/ folder relative to this app.js
+        // Clear any cached corrupted model
+        await tf.disposeVariables();
+        
+        // Load fresh model instance
         const m = await tf.loadLayersModel('./model/model.json');
         model = m;
+        
+        // Validate model loaded correctly
+        if (!model || !model.predict) {
+            throw new Error('Model structure invalid');
+        }
+        
         loader.style.display = 'none';
         output.textContent = 'Ready. Upload an image.';
+        console.log('Model loaded successfully');
     } catch (err) {
-        console.error('Model error:', err);
+        console.error('Model loading error:', err);
         loader.style.display = 'none';
-        // --- IMPROVED PHRASING FOR MODEL ERROR ---
-        output.textContent = 'System Error: Model could not be loaded. Please check model files.';
+        output.textContent = 'System Error: Model could not be loaded. Please refresh the page.';
     }
 }
 
+// CRITICAL FIX: Proper image preprocessing & prediction
 async function predictImage(imgElement) {
+    if (!model) {
+        throw new Error('Model not loaded');
+    }
+    
     return tf.tidy(() => {
-        const imgTensor = tf.browser.fromPixels(imgElement);
-        const resized = tf.image.resizeBilinear(imgTensor, [224, 224]);
-        const normalized = resized.toFloat().div(255).expandDims(0);
-        const logits = model.predict(normalized);
-        const data = logits.dataSync();
-        return Math.max(...data) * 100;
+        try {
+            // Convert image to tensor
+            let imgTensor = tf.browser.fromPixels(imgElement);
+            
+            // Ensure RGB (remove alpha channel if present)
+            if (imgTensor.shape[2] === 4) {
+                imgTensor = imgTensor.slice([0, 0, 0], [-1, -1, 3]);
+            }
+            
+            // Resize to model's expected input (typically 224x224)
+            const resized = tf.image.resizeBilinear(imgTensor, [224, 224]);
+            
+            // Normalize to [0, 1] range
+            const normalized = resized.toFloat().div(255.0);
+            
+            // Add batch dimension
+            const batched = normalized.expandDims(0);
+            
+            // Run prediction
+            const prediction = model.predict(batched);
+            
+            // Get raw prediction values
+            const predData = prediction.dataSync();
+            
+            // CRITICAL: Proper confidence calculation
+            // Model outputs [authentic_prob, replica_prob] based on metadata.json labels
+            const authenticProb = predData[0]; // First value is authentic
+            const replicaProb = predData[1]; // Second value is replica
+            
+            // Convert to percentage (0-100)
+            const confidence = authenticProb * 100;
+            
+            console.log('Raw prediction:', predData);
+            console.log('Authentic probability:', authenticProb);
+            console.log('Confidence %:', confidence);
+            
+            return confidence;
+            
+        } catch (err) {
+            console.error('Prediction error:', err);
+            throw err;
+        }
     });
 }
 
@@ -62,26 +112,15 @@ function showPreview(dataUrl) {
     return img;
 }
 
-// --- 2. Certificate Logic (Minting & Verification) ---
+// --- Certificate Logic ---
 
-/**
- * GENERATE (MINT): 
- * 1. Creates a random ID.
- * 2. Sends ID + Date + QR Data to Worker.
- * 3. Downloads PDF.
- */
 async function mintCertificate() {
     if (currentConfidence < 85) {
-        // --- IMPROVED PHRASING FOR AUTHENTICATION FAILURE ---
-        alert("Authentication score is too low to mint the certificate (Requires 85% or higher).");
+        alert("Authentication score is too low to mint certificate (Requires 85% or higher).");
         return;
     }
 
-    // Generate a Random ID (In a real app, the Worker should do this, but this works for now)
     const newCertId = 'OF-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-    
-    // THE STRATEGY: This URL is what goes INSIDE the QR Code
-    // When scanned, it leads back here with ?verify=ID
     const qrPayload = `${APP_URL}/?verify=${newCertId}`;
 
     statusMessage.textContent = 'Minting Certificate...';
@@ -89,7 +128,6 @@ async function mintCertificate() {
     mintButton.textContent = "Processing...";
 
     try {
-        // We pass the ID and the QR URL to the worker as query params
         const url = `${WORKER_URL}/certificate/${newCertId}?qrData=${encodeURIComponent(qrPayload)}`;
         
         const response = await fetch(url, { method: 'GET' });
@@ -106,12 +144,10 @@ async function mintCertificate() {
             output.textContent = `Certificate Minted! ID: ${newCertId}`;
             statusMessage.textContent = 'Download started.';
         } else {
-            // --- IMPROVED PHRASING FOR WORKER ERROR ---
             throw new Error(`Worker returned status: ${response.status}`);
         }
     } catch (e) {
         console.error(e);
-        // --- IMPROVED PHRASING FOR NETWORK/API FAILURE ---
         statusMessage.textContent = 'Minting failed. API or network error.';
     } finally {
         mintButton.disabled = false;
@@ -119,45 +155,36 @@ async function mintCertificate() {
     }
 }
 
-/**
- * VERIFY:
- * Checks if a Certificate ID exists (Simulated for now by trying to fetch it).
- */
 async function verifyCertificate(certId) {
     const trimmedId = certId.trim();
     
     if (!trimmedId) {
-        // --- NEW STRATEGIC ERROR PHRASING FOR BLANK INPUT ---
         statusMessage.style.color = 'orange';
         statusMessage.textContent = 'Please enter a Certificate ID to verify.';
-        return; // Exit if input is blank
+        return;
     }
     
     statusMessage.textContent = `Verifying ID: ${trimmedId}...`;
-    certIdInput.value = trimmedId; // Fill input for visual feedback
+    certIdInput.value = trimmedId;
 
-    // In a real database app, we would query an API.
-    // Here, we simulate verification by attempting to fetch the cert.
     try {
         const url = `${WORKER_URL}/certificate/${trimmedId}`;
-        const response = await fetch(url, { method: 'HEAD' }); // Just check headers
+        const response = await fetch(url, { method: 'HEAD' });
 
         if (response.ok || response.status === 200) {
             statusMessage.style.color = 'green';
             statusMessage.innerHTML = `✅ <strong>Verified Authentic</strong><br>ID: ${trimmedId}`;
             output.textContent = "Certificate Verified via Scan";
-            
         } else {
             statusMessage.style.color = 'red';
             statusMessage.textContent = '❌ Certificate Invalid or Not Found';
         }
     } catch (e) {
-        // Fallback for demo: just show it was scanned
         statusMessage.textContent = `Scanned ID: ${trimmedId}. Verification check failed (Network error).`;
     }
 }
 
-// --- 3. Event Listeners ---
+// --- Event Listeners ---
 
 uploadButton.addEventListener('click', () => fileInput.click());
 
@@ -167,21 +194,27 @@ fileInput.addEventListener('change', async (e) => {
 
     loader.style.display = 'block';
     output.textContent = 'Analyzing...';
-    resultAction.style.display = 'none'; // Hide previous results
+    resultAction.style.display = 'none';
 
     const reader = new FileReader();
     reader.onload = async (ev) => {
         const img = showPreview(ev.target.result);
         img.onload = async () => {
-            currentConfidence = await predictImage(img);
-            loader.style.display = 'none';
-            
-            if (currentConfidence > 85) {
-                output.innerHTML = `<span style="color:green">Authentic (${currentConfidence.toFixed(1)}%)</span>`;
-                resultAction.style.display = 'block'; // Show Mint Button
-            } else {
-                output.innerHTML = `<span style="color:red">Potential Replica (${currentConfidence.toFixed(1)}%)</span>`;
-                resultAction.style.display = 'none';
+            try {
+                currentConfidence = await predictImage(img);
+                loader.style.display = 'none';
+                
+                if (currentConfidence >= 85) {
+                    output.innerHTML = `<span style="color:green">✓ Authentic (${currentConfidence.toFixed(1)}%)</span>`;
+                    resultAction.style.display = 'block';
+                } else {
+                    output.innerHTML = `<span style="color:red">✗ Potential Replica (${currentConfidence.toFixed(1)}%)</span>`;
+                    resultAction.style.display = 'none';
+                }
+            } catch (err) {
+                console.error('Analysis failed:', err);
+                loader.style.display = 'none';
+                output.innerHTML = `<span style="color:red">Analysis Error. Please try again.</span>`;
             }
         };
     };
@@ -194,24 +227,20 @@ verifyButton.addEventListener('click', () => {
     verifyCertificate(certIdInput.value.trim());
 });
 
-// --- 4. Initialization & URL Param Check (QR Logic) ---
+// --- Initialization ---
 
 window.addEventListener('load', async () => {
     await loadModel();
 
-    // CHECK FOR QR CODE SCAN
-    // If the user came here via opalforge.tech/?verify=123
     const urlParams = new URLSearchParams(window.location.search);
     const verifyId = urlParams.get('verify');
 
     if (verifyId) {
         console.log("QR Code detected:", verifyId);
-        // Scroll to verification section
         const verifySection = document.getElementById('verifySection');
         if (verifySection) {
             verifySection.scrollIntoView({ behavior: 'smooth' });
         }
-        // Trigger verification
         verifyCertificate(verifyId);
     }
 });
@@ -220,6 +249,5 @@ window.addEventListener('load', async () => {
 document.addEventListener('mousemove', e => {
     const x = Math.round((e.clientX / window.innerWidth) * 100);
     const y = Math.round((e.clientY / window.innerHeight) * 100);
-    // Adjusted body background to account for overflow change
     document.body.style.background = `linear-gradient(180deg,var(--snow) 60%, var(--navy) 40%), radial-gradient(circle at ${x}% ${y}%, rgba(184,134,11,0.06), transparent 15%)`;
 });
