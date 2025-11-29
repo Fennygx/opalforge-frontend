@@ -24,10 +24,8 @@
             background:linear-gradient(180deg,var(--snow) 60%,var(--navy) 40%);
             background-size:200% 200%;
             animation:gradientShift 20s ease infinite;
-            /* CRITICAL FIX: Proper scrolling */
             overflow-y: auto; 
             overflow-x: hidden;
-            /* CRITICAL FIX: Flexbox layout for footer positioning */
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -44,7 +42,7 @@
             max-width:720px;
             width:90%;
             padding:3rem;
-            margin: 120px auto 40px auto; /* CRITICAL FIX: Proper centering */
+            margin: 120px auto 40px auto;
             border-radius:20px;
             background:rgba(255,255,255,.86);
             backdrop-filter:blur(18px);
@@ -64,15 +62,14 @@
         #upload:hover{transform:translateY(-3px);box-shadow:0 18px 40px rgba(184,134,11,.16)}
         #output{margin-top:1.75rem;font-size:1.15rem;font-weight:700;color:var(--navy);text-shadow:0 0 6px rgba(192,192,192,.28)}
         #loader{margin-top:.6rem;color:var(--gold)}
-        /* CRITICAL FIX: Footer positioning */
         footer{
             position: relative;
             width: 100%;
             text-align: center;
             padding: 20px;
-            margin-top: auto; /* Push to bottom */
+            margin-top: auto;
             font-size:.9rem;
-            color: rgba(249, 249, 249, 0.8); /* Light color for dark background */
+            color: rgba(249, 249, 249, 0.8);
             z-index:100;
             text-shadow: 0 0 8px rgba(0,0,0,0.3);
         }
@@ -89,6 +86,96 @@
         .success-text { color: green; }
         .hidden { display: none !important; }
         
+        /* QR Display Styles */
+        #qrDisplay {
+            display: none;
+            margin-top: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        #qrDisplay img {
+            border-radius: 8px;
+        }
+        #qrDisplay p {
+            margin: 10px 0 0 0;
+            font-size: 0.85rem;
+            color: #666;
+        }
+        
+        /* Verification Result Styles */
+        .verification-result {
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.7);
+        }
+        .verification-result.success {
+            border-left: 4px solid #22c55e;
+        }
+        .verification-result.error {
+            border-left: 4px solid #ef4444;
+        }
+        
+        /* Section Divider */
+        .section-divider {
+            margin: 30px 0;
+            border: 0;
+            border-top: 1px dashed var(--silver);
+        }
+        
+        /* Input Styles */
+        .cert-input {
+            padding: 12px 16px;
+            border: 1px solid var(--silver);
+            border-radius: 999px;
+            width: 50%;
+            max-width: 300px;
+            color: var(--navy);
+            font-size: 1rem;
+            transition: border-color 0.2s ease;
+        }
+        .cert-input:focus {
+            outline: none;
+            border-color: var(--gold);
+        }
+        
+        /* Button Variants */
+        .btn-primary {
+            background: linear-gradient(90deg, #00ffaa, #00c6ff);
+            color: var(--navy);
+            padding: 12px 28px;
+            border: none;
+            border-radius: 999px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 198, 255, 0.2);
+        }
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: var(--navy);
+            color: var(--snow);
+            padding: 12px 20px;
+            border: none;
+            border-radius: 999px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background 0.2s ease;
+        }
+        .btn-secondary:hover {
+            background: #000060;
+        }
+        
         /* Responsive adjustments */
         @media (max-width: 768px) {
             .container { 
@@ -96,6 +183,14 @@
                 margin: 100px 20px 40px 20px;
             }
             h1 { font-size: 2rem; }
+            .cert-input {
+                width: 100%;
+                max-width: none;
+                margin-bottom: 10px;
+            }
+            .controls {
+                flex-direction: column;
+            }
         }
     </style>
 </head>
@@ -107,7 +202,8 @@
         <h1 id="brandTitle">OpalForge</h1>
         <p>Forged in Fire. Proven in Truth.</p>
 
-        <div id="authSection">
+        <!-- Authentication Section -->
+        <section id="authSection">
             <div class="controls">
                 <label for="upload" id="uploadLabel">
                     <input id="fileInput" type="file" accept="image/*" class="sr-only">
@@ -119,23 +215,38 @@
             <div id="loader" aria-hidden="true">Please wait…</div>
 
             <div id="resultAction" class="verification-box">
-                <h3>Authentication Successful</h3>
-                <p>This item appears authentic. You can now mint a digital certificate.</p>
-                <button id="mintButton" type="button" style="background: linear-gradient(90deg, #00ffaa, #00c6ff); color: var(--navy); padding: 12px 28px; border: none; border-radius: 999px; font-weight: 600; cursor: pointer;">Mint Certificate</button>
+                <h3 style="margin-top: 0;">Authentication Successful</h3>
+                <p style="margin-bottom: 1rem;">This item appears authentic. You can now mint a digital certificate.</p>
+                <button id="mintButton" type="button" class="btn-primary">Mint Certificate</button>
             </div>
-        </div>
+        </section>
 
-        <div id="verifySection">
-            <hr style="margin: 30px 0; border: 0; border-top: 1px dashed var(--silver);">
-            <h2>Certificate Lookup</h2>
-            <p style="margin-bottom: 1rem; color: #1f2a4d;">Scan a QR code or enter ID manually.</p>
+        <hr class="section-divider">
+
+        <!-- Verification Section -->
+        <section id="verifySection">
+            <h2 style="margin-bottom: 0.5rem;">Certificate Lookup</h2>
+            <p style="margin-bottom: 1.5rem; color: #1f2a4d;">Scan a QR code or enter ID manually.</p>
 
             <div class="controls">
-                <input type="text" id="certIdInput" placeholder="Certificate ID" style="padding: 12px; border: 1px solid var(--silver); border-radius: 999px; width: 50%; max-width: 300px; color: var(--navy);">
-                <button id="verifyButton" type="button" style="background: var(--navy); color: var(--snow); padding: 12px 20px; border: none; border-radius: 999px; cursor: pointer;">Verify</button>
+                <input 
+                    type="text" 
+                    id="certIdInput" 
+                    placeholder="e.g. OF-ABC123XYZ" 
+                    class="cert-input"
+                    autocomplete="off"
+                    spellcheck="false"
+                >
+                <button id="verifyButton" type="button" class="btn-secondary">Verify</button>
             </div>
+            
             <div id="statusMessage" style="margin-top: 15px; font-weight: bold; color: var(--navy);" aria-live="polite"></div>
-        </div>
+            
+            <!-- QR Code Display (shown after verification) -->
+            <div id="qrDisplay">
+                <p>Scan to verify this certificate</p>
+            </div>
+        </section>
     </main>
     
     <footer>© 2025 OpalForge — Precision Authenticated.</footer>
