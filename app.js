@@ -19,28 +19,30 @@ const statusMessage = document.getElementById('statusMessage');
 loader.style.display = 'none';
 let model = null;
 let currentConfidence = 0;
+let currentImageData = null; // Store image for certificate
 
-// --- CRITICAL FIX: Model Loading & Prediction ---
+// --- FIXED: Model Loading & Prediction ---
 
 async function loadModel() {
     loader.style.display = 'block';
     output.textContent = 'Loading AI model...';
     try {
-        // Clear any cached corrupted model
         await tf.disposeVariables();
         
-        // Load fresh model instance
         const m = await tf.loadLayersModel('./model/model.json');
         model = m;
         
-        // Validate model loaded correctly
         if (!model || !model.predict) {
             throw new Error('Model structure invalid');
         }
         
+        // Log model info for debugging
+        console.log('Model loaded successfully');
+        console.log('Input shape:', model.inputs[0].shape);
+        console.log('Output shape:', model.outputs[0].shape);
+        
         loader.style.display = 'none';
         output.textContent = 'Ready. Upload an image.';
-        console.log('Model loaded successfully');
     } catch (err) {
         console.error('Model loading error:', err);
         loader.style.display = 'none';
@@ -48,7 +50,7 @@ async function loadModel() {
     }
 }
 
-// CRITICAL FIX: Proper image preprocessing & prediction
+// CRITICAL FIX: Check model metadata and handle confidence correctly
 async function predictImage(imgElement) {
     if (!model) {
         throw new Error('Model not loaded');
@@ -56,41 +58,67 @@ async function predictImage(imgElement) {
     
     return tf.tidy(() => {
         try {
-            // Convert image to tensor
             let imgTensor = tf.browser.fromPixels(imgElement);
             
-            // Ensure RGB (remove alpha channel if present)
             if (imgTensor.shape[2] === 4) {
                 imgTensor = imgTensor.slice([0, 0, 0], [-1, -1, 3]);
             }
             
-            // Resize to model's expected input (typically 224x224)
             const resized = tf.image.resizeBilinear(imgTensor, [224, 224]);
-            
-            // Normalize to [0, 1] range
             const normalized = resized.toFloat().div(255.0);
-            
-            // Add batch dimension
             const batched = normalized.expandDims(0);
             
-            // Run prediction
             const prediction = model.predict(batched);
-            
-            // Get raw prediction values
             const predData = prediction.dataSync();
             
-            // CRITICAL: Proper confidence calculation
-            // Model outputs [authentic_prob, replica_prob] based on metadata.json labels
-            const authenticProb = predData[0]; // First value is authentic
-            const replicaProb = predData[1]; // Second value is replica
+            console.log('Raw prediction output:', predData);
+            console.log('Output length:', predData.length);
             
-            // Convert to percentage (0-100)
-            const confidence = authenticProb * 100;
+            let confidence;
             
-            console.log('Raw prediction:', predData);
-            console.log('Authentic probability:', authenticProb);
-            console.log('Confidence %:', confidence);
+            // CRITICAL FIX: Handle different model output formats
+            if (predData.length === 1) {
+                // Single output (sigmoid): value represents P(authentic)
+                // If close to 1 = authentic, close to 0 = replica
+                confidence = predData[0] * 100;
+                console.log('Single output model (sigmoid)');
+            } else if (predData.length === 2) {
+                // Two outputs (softmax): check which index is authentic
+                // IMPORTANT: Verify your model.json metadata for label order!
+                // Common formats:
+                // Option A: [authentic, replica] - index 0 is authentic
+                // Option B: [replica, authentic] - index 1 is authentic
+                
+                // FIX: Check if labels are inverted
+                // If replicas are showing as authentic, swap these:
+                const authenticIndex = 0; // Try changing to 1 if scores are inverted
+                const replicaIndex = 1;   // Try changing to 0 if scores are inverted
+                
+                const authenticProb = predData[authenticIndex];
+                const replicaProb = predData[replicaIndex];
+                
+                console.log(`Authentic prob (index ${authenticIndex}):`, authenticProb);
+                console.log(`Replica prob (index ${replicaIndex}):`, replicaProb);
+                
+                // If model outputs logits instead of probabilities, apply softmax
+                if (authenticProb + replicaProb < 0.99 || authenticProb + replicaProb > 1.01) {
+                    console.log('Applying softmax normalization');
+                    const maxVal = Math.max(authenticProb, replicaProb);
+                    const expAuth = Math.exp(authenticProb - maxVal);
+                    const expRep = Math.exp(replicaProb - maxVal);
+                    const sumExp = expAuth + expRep;
+                    confidence = (expAuth / sumExp) * 100;
+                } else {
+                    confidence = authenticProb * 100;
+                }
+            } else {
+                throw new Error(`Unexpected output shape: ${predData.length}`);
+            }
             
+            // Sanity check - clamp to valid range
+            confidence = Math.max(0, Math.min(100, confidence));
+            
+            console.log('Final confidence %:', confidence);
             return confidence;
             
         } catch (err) {
@@ -109,6 +137,7 @@ function showPreview(dataUrl) {
     img.style.height = '100%';
     img.style.objectFit = 'cover';
     imgPreview.appendChild(img);
+    currentImageData = dataUrl; // Store for certificate
     return img;
 }
 
@@ -128,9 +157,28 @@ async function mintCertificate() {
     mintButton.textContent = "Processing...";
 
     try {
-        const url = `${WORKER_URL}/certificate/${newCertId}?qrData=${encodeURIComponent(qrPayload)}`;
+        // First, store the certificate in the database
+        const storeResponse = await fetch(`${WORKER_URL}/certificate`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                certId: newCertId,
+                confidence: currentConfidence,
+                timestamp: new Date().toISOString(),
+                qrPayload: qrPayload
+            })
+        });
+
+        if (!storeResponse.ok) {
+            throw new Error(`Failed to store certificate: ${storeResponse.status}`);
+        }
+
+        // Then generate and download the PDF
+        const pdfUrl = `${WORKER_URL}/certificate/${newCertId}/pdf?qrData=${encodeURIComponent(qrPayload)}&confidence=${currentConfidence.toFixed(1)}`;
         
-        const response = await fetch(url, { method: 'GET' });
+        const response = await fetch(pdfUrl, { method: 'GET' });
 
         if (response.ok) {
             const blob = await response.blob();
@@ -142,13 +190,16 @@ async function mintCertificate() {
             document.body.removeChild(link);
             
             output.textContent = `Certificate Minted! ID: ${newCertId}`;
-            statusMessage.textContent = 'Download started.';
+            statusMessage.innerHTML = `<span style="color: green;">✓ Download started. Certificate ID: <strong>${newCertId}</strong></span>`;
+            
+            // Show the certificate ID for user reference
+            certIdInput.value = newCertId;
         } else {
             throw new Error(`Worker returned status: ${response.status}`);
         }
     } catch (e) {
-        console.error(e);
-        statusMessage.textContent = 'Minting failed. API or network error.';
+        console.error('Minting error:', e);
+        statusMessage.innerHTML = `<span style="color: red;">Minting failed: ${e.message}</span>`;
     } finally {
         mintButton.disabled = false;
         mintButton.textContent = "Mint Certificate";
@@ -156,11 +207,18 @@ async function mintCertificate() {
 }
 
 async function verifyCertificate(certId) {
-    const trimmedId = certId.trim();
+    const trimmedId = certId.trim().toUpperCase();
     
     if (!trimmedId) {
         statusMessage.style.color = 'orange';
         statusMessage.textContent = 'Please enter a Certificate ID to verify.';
+        return;
+    }
+    
+    // Validate format
+    if (!trimmedId.startsWith('OF-') || trimmedId.length < 5) {
+        statusMessage.style.color = 'orange';
+        statusMessage.textContent = 'Invalid certificate format. IDs start with "OF-"';
         return;
     }
     
@@ -169,18 +227,52 @@ async function verifyCertificate(certId) {
 
     try {
         const url = `${WORKER_URL}/certificate/${trimmedId}`;
-        const response = await fetch(url, { method: 'HEAD' });
+        const response = await fetch(url, { method: 'GET' });
 
-        if (response.ok || response.status === 200) {
+        if (response.ok) {
+            const data = await response.json();
             statusMessage.style.color = 'green';
-            statusMessage.innerHTML = `✅ <strong>Verified Authentic</strong><br>ID: ${trimmedId}`;
-            output.textContent = "Certificate Verified via Scan";
-        } else {
+            statusMessage.innerHTML = `
+                ✅ <strong>Verified Authentic</strong><br>
+                ID: ${trimmedId}<br>
+                Confidence: ${data.confidence || 'N/A'}%<br>
+                Issued: ${data.timestamp ? new Date(data.timestamp).toLocaleDateString() : 'N/A'}
+            `;
+            output.textContent = "Certificate Verified";
+            
+            // Show QR code for the verified certificate
+            displayVerificationQR(trimmedId);
+        } else if (response.status === 404) {
             statusMessage.style.color = 'red';
-            statusMessage.textContent = '❌ Certificate Invalid or Not Found';
+            statusMessage.textContent = '❌ Certificate Not Found';
+        } else {
+            throw new Error(`Verification failed: ${response.status}`);
         }
     } catch (e) {
-        statusMessage.textContent = `Scanned ID: ${trimmedId}. Verification check failed (Network error).`;
+        console.error('Verification error:', e);
+        statusMessage.style.color = 'red';
+        statusMessage.textContent = `Verification error: ${e.message}`;
+    }
+}
+
+// NEW: Display QR code in UI after verification
+async function displayVerificationQR(certId) {
+    const qrContainer = document.getElementById('qrDisplay');
+    if (!qrContainer) return;
+    
+    try {
+        // Use a client-side QR library or fetch from worker
+        const qrUrl = `${WORKER_URL}/qr/${certId}`;
+        const response = await fetch(qrUrl);
+        
+        if (response.ok) {
+            const blob = await response.blob();
+            const imgUrl = URL.createObjectURL(blob);
+            qrContainer.innerHTML = `<img src="${imgUrl}" alt="Certificate QR Code" style="width: 150px; height: 150px;">`;
+            qrContainer.style.display = 'block';
+        }
+    } catch (e) {
+        console.error('QR display error:', e);
     }
 }
 
@@ -207,6 +299,9 @@ fileInput.addEventListener('change', async (e) => {
                 if (currentConfidence >= 85) {
                     output.innerHTML = `<span style="color:green">✓ Authentic (${currentConfidence.toFixed(1)}%)</span>`;
                     resultAction.style.display = 'block';
+                } else if (currentConfidence >= 50) {
+                    output.innerHTML = `<span style="color:orange">⚠ Uncertain (${currentConfidence.toFixed(1)}%)</span>`;
+                    resultAction.style.display = 'none';
                 } else {
                     output.innerHTML = `<span style="color:red">✗ Potential Replica (${currentConfidence.toFixed(1)}%)</span>`;
                     resultAction.style.display = 'none';
@@ -236,7 +331,7 @@ window.addEventListener('load', async () => {
     const verifyId = urlParams.get('verify');
 
     if (verifyId) {
-        console.log("QR Code detected:", verifyId);
+        console.log("QR Code scan detected:", verifyId);
         const verifySection = document.getElementById('verifySection');
         if (verifySection) {
             verifySection.scrollIntoView({ behavior: 'smooth' });
