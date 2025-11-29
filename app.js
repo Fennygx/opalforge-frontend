@@ -1,5 +1,5 @@
 // --- Configuration ---
-const WORKER_URL = 'https://opalforge-cert-gen.garcia-fenny.workers.dev';
+const WORKER_URL = 'https://api.opalforge.tech'; // UPDATED: Points to your CNAME record
 const APP_URL = 'https://opalforge.tech'; // Your frontend domain
 
 // --- DOM Elements ---
