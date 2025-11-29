@@ -1,5 +1,5 @@
 // --- Configuration ---
-const WORKER_URL = 'https://api.opalforge.tech'; // UPDATED: Points to your CNAME record
+const WORKER_URL = 'https://api.opalforge.tech';
 const APP_URL = 'https://opalforge.tech'; // Your frontend domain
 
 // --- DOM Elements ---
@@ -26,6 +26,7 @@ async function loadModel() {
     loader.style.display = 'block';
     output.textContent = 'Loading AI model...';
     try {
+        // IMPORTANT: Ensure your model files are in a /model/ folder relative to this app.js
         const m = await tf.loadLayersModel('./model/model.json');
         model = m;
         loader.style.display = 'none';
@@ -33,7 +34,8 @@ async function loadModel() {
     } catch (err) {
         console.error('Model error:', err);
         loader.style.display = 'none';
-        output.textContent = 'System Error: Model could not be loaded.';
+        // --- IMPROVED PHRASING FOR MODEL ERROR ---
+        output.textContent = 'System Error: Model could not be loaded. Please check model files.';
     }
 }
 
@@ -70,7 +72,8 @@ function showPreview(dataUrl) {
  */
 async function mintCertificate() {
     if (currentConfidence < 85) {
-        alert("Authentication score too low to mint certificate.");
+        // --- IMPROVED PHRASING FOR AUTHENTICATION FAILURE ---
+        alert("Authentication score is too low to mint the certificate (Requires 85% or higher).");
         return;
     }
 
@@ -87,7 +90,6 @@ async function mintCertificate() {
 
     try {
         // We pass the ID and the QR URL to the worker as query params
-        // Ensure your Worker is set up to read these!
         const url = `${WORKER_URL}/certificate/${newCertId}?qrData=${encodeURIComponent(qrPayload)}`;
         
         const response = await fetch(url, { method: 'GET' });
@@ -104,11 +106,13 @@ async function mintCertificate() {
             output.textContent = `Certificate Minted! ID: ${newCertId}`;
             statusMessage.textContent = 'Download started.';
         } else {
-            throw new Error('Worker returned error');
+            // --- IMPROVED PHRASING FOR WORKER ERROR ---
+            throw new Error(`Worker returned status: ${response.status}`);
         }
     } catch (e) {
         console.error(e);
-        statusMessage.textContent = 'Minting failed. Check connection.';
+        // --- IMPROVED PHRASING FOR NETWORK/API FAILURE ---
+        statusMessage.textContent = 'Minting failed. API or network error.';
     } finally {
         mintButton.disabled = false;
         mintButton.textContent = "Mint Certificate";
@@ -120,32 +124,36 @@ async function mintCertificate() {
  * Checks if a Certificate ID exists (Simulated for now by trying to fetch it).
  */
 async function verifyCertificate(certId) {
-    if (!certId) return;
+    const trimmedId = certId.trim();
     
-    statusMessage.textContent = `Verifying ID: ${certId}...`;
-    certIdInput.value = certId; // Fill input for visual feedback
+    if (!trimmedId) {
+        // --- NEW STRATEGIC ERROR PHRASING FOR BLANK INPUT ---
+        statusMessage.style.color = 'orange';
+        statusMessage.textContent = 'Please enter a Certificate ID to verify.';
+        return; // Exit if input is blank
+    }
+    
+    statusMessage.textContent = `Verifying ID: ${trimmedId}...`;
+    certIdInput.value = trimmedId; // Fill input for visual feedback
 
     // In a real database app, we would query an API.
     // Here, we simulate verification by attempting to fetch the cert.
-    // If the Worker generates it without error, we assume it's valid for this prototype.
     try {
-        const url = `${WORKER_URL}/certificate/${certId}`;
+        const url = `${WORKER_URL}/certificate/${trimmedId}`;
         const response = await fetch(url, { method: 'HEAD' }); // Just check headers
 
         if (response.ok || response.status === 200) {
             statusMessage.style.color = 'green';
-            statusMessage.innerHTML = `✅ <strong>Verified Authentic</strong><br>ID: ${certId}`;
+            statusMessage.innerHTML = `✅ <strong>Verified Authentic</strong><br>ID: ${trimmedId}`;
             output.textContent = "Certificate Verified via Scan";
             
-            // Optional: Auto-download the proof again
-            // downloadCertificate(certId); 
         } else {
             statusMessage.style.color = 'red';
             statusMessage.textContent = '❌ Certificate Invalid or Not Found';
         }
     } catch (e) {
         // Fallback for demo: just show it was scanned
-        statusMessage.textContent = `Scanned ID: ${certId}. (Database check pending)`;
+        statusMessage.textContent = `Scanned ID: ${trimmedId}. Verification check failed (Network error).`;
     }
 }
 
@@ -199,7 +207,10 @@ window.addEventListener('load', async () => {
     if (verifyId) {
         console.log("QR Code detected:", verifyId);
         // Scroll to verification section
-        document.getElementById('verifySection').scrollIntoView();
+        const verifySection = document.getElementById('verifySection');
+        if (verifySection) {
+            verifySection.scrollIntoView({ behavior: 'smooth' });
+        }
         // Trigger verification
         verifyCertificate(verifyId);
     }
@@ -209,5 +220,6 @@ window.addEventListener('load', async () => {
 document.addEventListener('mousemove', e => {
     const x = Math.round((e.clientX / window.innerWidth) * 100);
     const y = Math.round((e.clientY / window.innerHeight) * 100);
+    // Adjusted body background to account for overflow change
     document.body.style.background = `linear-gradient(180deg,var(--snow) 60%, var(--navy) 40%), radial-gradient(circle at ${x}% ${y}%, rgba(184,134,11,0.06), transparent 15%)`;
 });
