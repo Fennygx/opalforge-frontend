@@ -1,1 +1,170 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpalForge Quick Model Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+        .result { padding: 15px; margin: 10px 0; border-radius: 8px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        button { padding: 12px 24px; font-size: 16px; cursor: pointer; margin: 5px; }
+        #preview { max-width: 300px; margin: 20px 0; border-radius: 8px; }
+        pre { background: #333; color: #f8f8f2; padding: 15px; border-radius: 8px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>🔬 OpalForge Model Quick Test</h1>
+    <p>This tests your model with real images to verify predictions are working correctly.</p>
+    
+    <div>
+        <button onclick="loadModel()">1. Load Model</button>
+        <button onclick="testSynthetic()">2. Test Synthetic Images</button>
+    </div>
+    
+    <hr>
+    
+    <h3>3. Test with Real Image</h3>
+    <input type="file" id="imageInput" accept="image/*" onchange="testRealImage(event)">
+    <br>
+    <img id="preview" style="display:none;">
+    
+    <div id="results"></div>
+
+    <script>
+        let model = null;
+        const results = document.getElementById('results');
+        
+        function log(msg, type = 'info') {
+            results.innerHTML += `<div class="result ${type}">${msg}</div>`;
+        }
+        
+        function clearLog() {
+            results.innerHTML = '';
+        }
+        
+        async function loadModel() {
+            clearLog();
+            log('Loading model from ./model/model.json...');
+            
+            try {
+                model = await tf.loadLayersModel('./model/model.json');
+                log('✓ Model loaded successfully!', 'success');
+                
+                // Log model info
+                log(`Input shape: ${JSON.stringify(model.inputs[0].shape)}`);
+                log(`Output shape: ${JSON.stringify(model.outputs[0].shape)}`);
+                
+                // Quick sanity test
+                const testTensor = tf.zeros([1, 224, 224, 3]);
+                const pred = model.predict(testTensor);
+                const data = pred.dataSync();
+                log(`Sanity check (black image): [${data[0].toFixed(4)}, ${data[1].toFixed(4)}]`);
+                testTensor.dispose();
+                pred.dispose();
+                
+            } catch (err) {
+                log(`✗ Failed to load model: ${err.message}`, 'error');
+            }
+        }
+        
+        async function testSynthetic() {
+            if (!model) {
+                log('Please load the model first!', 'error');
+                return;
+            }
+            
+            log('<strong>--- Synthetic Image Tests ---</strong>');
+            
+            const tests = [
+                { name: 'Black', tensor: tf.zeros([1, 224, 224, 3]) },
+                { name: 'White', tensor: tf.ones([1, 224, 224, 3]) },
+                { name: 'Gray (0.5)', tensor: tf.fill([1, 224, 224, 3], 0.5) },
+                { name: 'Random #1', tensor: tf.randomUniform([1, 224, 224, 3]) },
+                { name: 'Random #2', tensor: tf.randomUniform([1, 224, 224, 3]) },
+                { name: 'Random #3', tensor: tf.randomUniform([1, 224, 224, 3]) },
+            ];
+            
+            for (const test of tests) {
+                const pred = model.predict(test.tensor);
+                const data = pred.dataSync();
+                const authPct = (data[0] * 100).toFixed(1);
+                const repPct = (data[1] * 100).toFixed(1);
+                const verdict = data[0] > 0.5 ? '✓ Authentic' : '✗ Replica';
+                
+                log(`${test.name}: Auth ${authPct}% | Rep ${repPct}% → ${verdict}`);
+                
+                test.tensor.dispose();
+                pred.dispose();
+            }
+            
+            log('<strong>If all results are nearly identical (e.g., all 99%), the model may have issues.</strong>');
+        }
+        
+        async function testRealImage(event) {
+            if (!model) {
+                log('Please load the model first!', 'error');
+                return;
+            }
+            
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const preview = document.getElementById('preview');
+            const reader = new FileReader();
+            
+            reader.onload = async (e) => {
+                preview.src = e.target.result;
+                preview.style.display = 'block';
+                
+                const img = new Image();
+                img.onload = async () => {
+                    log('<strong>--- Real Image Test ---</strong>');
+                    log(`Image: ${file.name} (${img.width}x${img.height})`);
+                    
+                    // Process image
+                    let tensor = tf.browser.fromPixels(img);
+                    if (tensor.shape[2] === 4) {
+                        tensor = tensor.slice([0, 0, 0], [-1, -1, 3]);
+                    }
+                    const resized = tf.image.resizeBilinear(tensor, [224, 224]);
+                    const normalized = resized.toFloat().div(255.0);
+                    const batched = normalized.expandDims(0);
+                    
+                    // Predict
+                    const pred = model.predict(batched);
+                    const data = pred.dataSync();
+                    
+                    const authPct = (data[0] * 100).toFixed(1);
+                    const repPct = (data[1] * 100).toFixed(1);
+                    
+                    log(`<pre>Raw output: [${data[0].toFixed(6)}, ${data[1].toFixed(6)}]
+Authentic: ${authPct}%
+Replica:   ${repPct}%</pre>`);
+                    
+                    if (data[0] >= 0.85) {
+                        log(`<strong style="color:green">✓ AUTHENTIC (${authPct}%)</strong>`, 'success');
+                    } else if (data[0] >= 0.5) {
+                        log(`<strong style="color:orange">⚠ UNCERTAIN (${authPct}%)</strong>`, 'info');
+                    } else {
+                        log(`<strong style="color:red">✗ REPLICA (${repPct}% replica confidence)</strong>`, 'error');
+                    }
+                    
+                    // Cleanup
+                    tensor.dispose();
+                    resized.dispose();
+                    normalized.dispose();
+                    batched.dispose();
+                    pred.dispose();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+    </script>
+</body>
+</html>
