@@ -126,16 +126,16 @@ async function predictImage(imgElement) {
             
             console.log('Raw prediction output:', predData);
             
-            // Based on metadata.json:
-            // labels: ["Verified Authentic", "Verified Replica / Counterfeit"]
-            // Index 0 = Authentic, Index 1 = Replica
+            // FIXED: Labels are inverted in the model output
+            // Despite metadata saying Index 0 = Authentic, the model outputs:
+            // Index 0 = Replica, Index 1 = Authentic
             
             let authenticProb, replicaProb;
             
             if (predData.length === 2) {
-                // Model uses softmax with 2 outputs
-                authenticProb = predData[0];
-                replicaProb = predData[1];
+                // Model uses softmax with 2 outputs - SWAPPED
+                authenticProb = predData[1];  // Index 1 is actually Authentic
+                replicaProb = predData[0];    // Index 0 is actually Replica
                 
                 // Verify they sum to ~1 (softmax output)
                 const sum = authenticProb + replicaProb;
