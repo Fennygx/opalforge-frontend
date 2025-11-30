@@ -18,20 +18,50 @@ const statusMessage = document.getElementById('statusMessage');
 // Initial State
 loader.style.display = 'none';
 let model = null;
+let modelMetadata = null;
 let currentConfidence = 0;
-let currentImageData = null; // Store image for certificate
+let currentImageData = null;
 
-// --- FIXED: Model Loading & Prediction ---
+// --- Model Loading with Metadata ---
+
+async function loadModelMetadata() {
+    try {
+        const response = await fetch('./model/metadata.json');
+        if (response.ok) {
+            modelMetadata = await response.json();
+            console.log('Model metadata loaded:', modelMetadata);
+            console.log('Labels:', modelMetadata.labels);
+            return modelMetadata;
+        }
+    } catch (err) {
+        console.warn('Could not load metadata.json, using defaults:', err);
+    }
+    
+    // Default metadata if file not found
+    modelMetadata = {
+        labels: ["Verified Authentic", "Verified Replica / Counterfeit"],
+        imageSize: 224,
+        modelName: "OpalForge"
+    };
+    return modelMetadata;
+}
 
 async function loadModel() {
     loader.style.display = 'block';
     output.textContent = 'Loading AI model...';
+    
     try {
+        // Load metadata first
+        await loadModelMetadata();
+        
+        // Clear any cached corrupted model
         await tf.disposeVariables();
         
+        // Load fresh model instance
         const m = await tf.loadLayersModel('./model/model.json');
         model = m;
         
+        // Validate model loaded correctly
         if (!model || !model.predict) {
             throw new Error('Model structure invalid');
         }
@@ -40,9 +70,22 @@ async function loadModel() {
         console.log('Model loaded successfully');
         console.log('Input shape:', model.inputs[0].shape);
         console.log('Output shape:', model.outputs[0].shape);
+        console.log('Model name:', modelMetadata.modelName);
+        
+        // Validate weights aren't corrupted - quick sanity check
+        const testPred = model.predict(tf.zeros([1, 224, 224, 3]));
+        const testData = testPred.dataSync();
+        console.log('Sanity check (black image):', testData);
+        testPred.dispose();
+        
+        // Check if predictions are suspiciously uniform
+        if (Math.abs(testData[0] - testData[1]) < 0.001) {
+            console.warn('⚠ WARNING: Model outputs are nearly identical - weights may be corrupted!');
+        }
         
         loader.style.display = 'none';
         output.textContent = 'Ready. Upload an image.';
+        
     } catch (err) {
         console.error('Model loading error:', err);
         loader.style.display = 'none';
@@ -50,7 +93,8 @@ async function loadModel() {
     }
 }
 
-// CRITICAL FIX: Check model metadata and handle confidence correctly
+// --- Prediction Logic ---
+
 async function predictImage(imgElement) {
     if (!model) {
         throw new Error('Model not loaded');
@@ -58,68 +102,65 @@ async function predictImage(imgElement) {
     
     return tf.tidy(() => {
         try {
+            // Convert image to tensor
             let imgTensor = tf.browser.fromPixels(imgElement);
             
+            // Ensure RGB (remove alpha channel if present)
             if (imgTensor.shape[2] === 4) {
                 imgTensor = imgTensor.slice([0, 0, 0], [-1, -1, 3]);
             }
             
-            const resized = tf.image.resizeBilinear(imgTensor, [224, 224]);
+            // Resize to model's expected input size (from metadata or default 224)
+            const imageSize = modelMetadata?.imageSize || 224;
+            const resized = tf.image.resizeBilinear(imgTensor, [imageSize, imageSize]);
+            
+            // Normalize to [0, 1] range
             const normalized = resized.toFloat().div(255.0);
+            
+            // Add batch dimension
             const batched = normalized.expandDims(0);
             
+            // Run prediction
             const prediction = model.predict(batched);
             const predData = prediction.dataSync();
             
             console.log('Raw prediction output:', predData);
-            console.log('Output length:', predData.length);
             
-            let confidence;
+            // Based on metadata.json:
+            // labels: ["Verified Authentic", "Verified Replica / Counterfeit"]
+            // Index 0 = Authentic, Index 1 = Replica
             
-            // CRITICAL FIX: Handle different model output formats
-            if (predData.length === 1) {
-                // Single output (sigmoid): value represents P(authentic)
-                // If close to 1 = authentic, close to 0 = replica
-                confidence = predData[0] * 100;
-                console.log('Single output model (sigmoid)');
-            } else if (predData.length === 2) {
-                // Two outputs (softmax): check which index is authentic
-                // IMPORTANT: Verify your model.json metadata for label order!
-                // Common formats:
-                // Option A: [authentic, replica] - index 0 is authentic
-                // Option B: [replica, authentic] - index 1 is authentic
+            let authenticProb, replicaProb;
+            
+            if (predData.length === 2) {
+                // Model uses softmax with 2 outputs
+                authenticProb = predData[0];
+                replicaProb = predData[1];
                 
-                // FIX: Check if labels are inverted
-                // If replicas are showing as authentic, swap these:
-                const authenticIndex = 0; // Try changing to 1 if scores are inverted
-                const replicaIndex = 1;   // Try changing to 0 if scores are inverted
+                // Verify they sum to ~1 (softmax output)
+                const sum = authenticProb + replicaProb;
+                console.log(`Authentic: ${authenticProb.toFixed(4)}, Replica: ${replicaProb.toFixed(4)}, Sum: ${sum.toFixed(4)}`);
                 
-                const authenticProb = predData[authenticIndex];
-                const replicaProb = predData[replicaIndex];
-                
-                console.log(`Authentic prob (index ${authenticIndex}):`, authenticProb);
-                console.log(`Replica prob (index ${replicaIndex}):`, replicaProb);
-                
-                // If model outputs logits instead of probabilities, apply softmax
-                if (authenticProb + replicaProb < 0.99 || authenticProb + replicaProb > 1.01) {
-                    console.log('Applying softmax normalization');
-                    const maxVal = Math.max(authenticProb, replicaProb);
-                    const expAuth = Math.exp(authenticProb - maxVal);
-                    const expRep = Math.exp(replicaProb - maxVal);
-                    const sumExp = expAuth + expRep;
-                    confidence = (expAuth / sumExp) * 100;
-                } else {
-                    confidence = authenticProb * 100;
+                if (Math.abs(sum - 1.0) > 0.1) {
+                    console.warn('Outputs do not sum to 1 - may need normalization');
                 }
+            } else if (predData.length === 1) {
+                // Single output (sigmoid) - value is P(class 0)
+                authenticProb = predData[0];
+                replicaProb = 1 - authenticProb;
             } else {
                 throw new Error(`Unexpected output shape: ${predData.length}`);
             }
             
-            // Sanity check - clamp to valid range
-            confidence = Math.max(0, Math.min(100, confidence));
+            // Convert to percentage (0-100)
+            const confidence = authenticProb * 100;
             
-            console.log('Final confidence %:', confidence);
-            return confidence;
+            // Sanity check - clamp to valid range
+            const clampedConfidence = Math.max(0, Math.min(100, confidence));
+            
+            console.log(`Final confidence: ${clampedConfidence.toFixed(1)}% authentic`);
+            
+            return clampedConfidence;
             
         } catch (err) {
             console.error('Prediction error:', err);
@@ -137,7 +178,7 @@ function showPreview(dataUrl) {
     img.style.height = '100%';
     img.style.objectFit = 'cover';
     imgPreview.appendChild(img);
-    currentImageData = dataUrl; // Store for certificate
+    currentImageData = dataUrl;
     return img;
 }
 
@@ -172,7 +213,8 @@ async function mintCertificate() {
         });
 
         if (!storeResponse.ok) {
-            throw new Error(`Failed to store certificate: ${storeResponse.status}`);
+            const errText = await storeResponse.text();
+            throw new Error(`Failed to store certificate: ${storeResponse.status} - ${errText}`);
         }
 
         // Then generate and download the PDF
@@ -195,7 +237,7 @@ async function mintCertificate() {
             // Show the certificate ID for user reference
             certIdInput.value = newCertId;
         } else {
-            throw new Error(`Worker returned status: ${response.status}`);
+            throw new Error(`PDF generation failed: ${response.status}`);
         }
     } catch (e) {
         console.error('Minting error:', e);
@@ -235,7 +277,7 @@ async function verifyCertificate(certId) {
             statusMessage.innerHTML = `
                 ✅ <strong>Verified Authentic</strong><br>
                 ID: ${trimmedId}<br>
-                Confidence: ${data.confidence || 'N/A'}%<br>
+                Confidence: ${data.confidence ? data.confidence.toFixed(1) : 'N/A'}%<br>
                 Issued: ${data.timestamp ? new Date(data.timestamp).toLocaleDateString() : 'N/A'}
             `;
             output.textContent = "Certificate Verified";
@@ -255,13 +297,11 @@ async function verifyCertificate(certId) {
     }
 }
 
-// NEW: Display QR code in UI after verification
 async function displayVerificationQR(certId) {
     const qrContainer = document.getElementById('qrDisplay');
     if (!qrContainer) return;
     
     try {
-        // Use a client-side QR library or fetch from worker
         const qrUrl = `${WORKER_URL}/qr/${certId}`;
         const response = await fetch(qrUrl);
         
@@ -340,9 +380,5 @@ window.addEventListener('load', async () => {
     }
 });
 
-// Mousemove effect
-document.addEventListener('mousemove', e => {
-    const x = Math.round((e.clientX / window.innerWidth) * 100);
-    const y = Math.round((e.clientY / window.innerHeight) * 100);
-    document.body.style.background = `linear-gradient(180deg,var(--snow) 60%, var(--navy) 40%), radial-gradient(circle at ${x}% ${y}%, rgba(184,134,11,0.06), transparent 15%)`;
-});
+// Mousemove glow effect - uses a separate overlay instead of changing body background
+// (Removed to fix white strip issue - the glow div already provides ambient effect)
