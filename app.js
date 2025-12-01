@@ -1,6 +1,7 @@
 // --- Configuration ---
 const WORKER_URL = 'https://api.opalforge.tech';
 const APP_URL = 'https://opalforge.tech';
+const MODEL_URL = './model/';
 
 // --- DOM Elements ---
 const output = document.getElementById('output');
@@ -18,70 +19,24 @@ const statusMessage = document.getElementById('statusMessage');
 // Initial State
 loader.style.display = 'none';
 let model = null;
-let modelMetadata = null;
 let currentConfidence = 0;
 let currentImageData = null;
 
-// --- Model Loading with Metadata ---
-
-async function loadModelMetadata() {
-    try {
-        const response = await fetch('./model/metadata.json');
-        if (response.ok) {
-            modelMetadata = await response.json();
-            console.log('Model metadata loaded:', modelMetadata);
-            console.log('Labels:', modelMetadata.labels);
-            return modelMetadata;
-        }
-    } catch (err) {
-        console.warn('Could not load metadata.json, using defaults:', err);
-    }
-    
-    // Default metadata if file not found
-    modelMetadata = {
-        labels: ["Verified Authentic", "Verified Replica / Counterfeit"],
-        imageSize: 224,
-        modelName: "OpalForge"
-    };
-    return modelMetadata;
-}
+// --- Model Loading using Teachable Machine Library ---
 
 async function loadModel() {
     loader.style.display = 'block';
     output.textContent = 'Loading AI model...';
     
     try {
-        // Load metadata first
-        await loadModelMetadata();
+        const modelURL = MODEL_URL + 'model.json';
+        const metadataURL = MODEL_URL + 'metadata.json';
         
-        // Clear any cached corrupted model
-        await tf.disposeVariables();
+        // Use Teachable Machine library - handles preprocessing automatically
+        model = await tmImage.load(modelURL, metadataURL);
         
-        // Load fresh model instance
-        const m = await tf.loadLayersModel('./model/model.json');
-        model = m;
-        
-        // Validate model loaded correctly
-        if (!model || !model.predict) {
-            throw new Error('Model structure invalid');
-        }
-        
-        // Log model info for debugging
-        console.log('Model loaded successfully');
-        console.log('Input shape:', model.inputs[0].shape);
-        console.log('Output shape:', model.outputs[0].shape);
-        console.log('Model name:', modelMetadata.modelName);
-        
-        // Validate weights aren't corrupted - quick sanity check
-        const testPred = model.predict(tf.zeros([1, 224, 224, 3]));
-        const testData = testPred.dataSync();
-        console.log('Sanity check (black image):', testData);
-        testPred.dispose();
-        
-        // Check if predictions are suspiciously uniform
-        if (Math.abs(testData[0] - testData[1]) < 0.001) {
-            console.warn('⚠ WARNING: Model outputs are nearly identical - weights may be corrupted!');
-        }
+        console.log('Model loaded successfully via Teachable Machine library');
+        console.log('Total classes:', model.getTotalClasses());
         
         loader.style.display = 'none';
         output.textContent = 'Ready. Upload an image.';
@@ -93,80 +48,45 @@ async function loadModel() {
     }
 }
 
-// --- Prediction Logic ---
+// --- Prediction Logic using Teachable Machine ---
 
 async function predictImage(imgElement) {
     if (!model) {
         throw new Error('Model not loaded');
     }
     
-    return tf.tidy(() => {
-        try {
-            // Convert image to tensor
-            let imgTensor = tf.browser.fromPixels(imgElement);
+    try {
+        // Teachable Machine library handles all preprocessing automatically
+        const predictions = await model.predict(imgElement, false);
+        
+        console.log('Raw predictions:', predictions);
+        
+        // Find the "Verified Authentic" prediction
+        let authenticProb = 0;
+        let replicaProb = 0;
+        
+        for (const pred of predictions) {
+            console.log(`Class: ${pred.className}, Probability: ${pred.probability.toFixed(4)}`);
             
-            // Ensure RGB (remove alpha channel if present)
-            if (imgTensor.shape[2] === 4) {
-                imgTensor = imgTensor.slice([0, 0, 0], [-1, -1, 3]);
+            if (pred.className.toLowerCase().includes('authentic')) {
+                authenticProb = pred.probability;
+            } else if (pred.className.toLowerCase().includes('replica') || pred.className.toLowerCase().includes('counterfeit')) {
+                replicaProb = pred.probability;
             }
-            
-            // Resize to model's expected input size (from metadata or default 224)
-            const imageSize = modelMetadata?.imageSize || 224;
-            const resized = tf.image.resizeBilinear(imgTensor, [imageSize, imageSize]);
-            
-            // Normalize to [0, 1] range
-            const normalized = resized.toFloat().div(255.0);
-            
-            // Add batch dimension
-            const batched = normalized.expandDims(0);
-            
-            // Run prediction
-            const prediction = model.predict(batched);
-            const predData = prediction.dataSync();
-            
-            console.log('Raw prediction output:', predData);
-            
-            // Model output matches metadata.json labels:
-            // Index 0 = "Verified Authentic"
-            // Index 1 = "Verified Replica / Counterfeit"
-            
-            let authenticProb, replicaProb;
-            
-            if (predData.length === 2) {
-                // Model uses softmax with 2 outputs
-                authenticProb = predData[0];  // Index 0 = Authentic
-                replicaProb = predData[1];    // Index 1 = Replica
-                
-                // Verify they sum to ~1 (softmax output)
-                const sum = authenticProb + replicaProb;
-                console.log(`Authentic: ${authenticProb.toFixed(4)}, Replica: ${replicaProb.toFixed(4)}, Sum: ${sum.toFixed(4)}`);
-                
-                if (Math.abs(sum - 1.0) > 0.1) {
-                    console.warn('Outputs do not sum to 1 - may need normalization');
-                }
-            } else if (predData.length === 1) {
-                // Single output (sigmoid) - value is P(class 0)
-                authenticProb = predData[0];
-                replicaProb = 1 - authenticProb;
-            } else {
-                throw new Error(`Unexpected output shape: ${predData.length}`);
-            }
-            
-            // Convert to percentage (0-100)
-            const confidence = authenticProb * 100;
-            
-            // Sanity check - clamp to valid range
-            const clampedConfidence = Math.max(0, Math.min(100, confidence));
-            
-            console.log(`Final confidence: ${clampedConfidence.toFixed(1)}% authentic`);
-            
-            return clampedConfidence;
-            
-        } catch (err) {
-            console.error('Prediction error:', err);
-            throw err;
         }
-    });
+        
+        // Convert to percentage (0-100)
+        const confidence = authenticProb * 100;
+        
+        console.log(`Authentic: ${authenticProb.toFixed(4)}, Replica: ${replicaProb.toFixed(4)}`);
+        console.log(`Final confidence: ${confidence.toFixed(1)}% authentic`);
+        
+        return confidence;
+        
+    } catch (err) {
+        console.error('Prediction error:', err);
+        throw err;
+    }
 }
 
 function showPreview(dataUrl) {
