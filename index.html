@@ -15,9 +15,8 @@
     <link rel="mask-icon" href="/assets/favicon.svg" color="#000040">
     <link rel="manifest" href="/assets/site.webmanifest">
     
-    <!-- TensorFlow.js and Teachable Machine Library -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.3/dist/teachablemachine-image.min.js"></script>
+    <!-- TensorFlow.js only - same as working Netlify version -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     
     <style>
         *{box-sizing:border-box}
@@ -32,7 +31,6 @@
             min-height:100vh;
             font-family:Poppins,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
             color:var(--navy);
-            /* FIXED: Navy background on body, snow gradient overlay at top */
             background: var(--navy);
             overflow-y: auto; 
             overflow-x: hidden;
@@ -40,7 +38,6 @@
             flex-direction: column;
             align-items: center;
         }
-        /* Top section with snow color */
         body::before {
             content: '';
             position: fixed;
@@ -82,7 +79,6 @@
         #upload:hover{transform:translateY(-3px);box-shadow:0 18px 40px rgba(184,134,11,.16)}
         #output{margin-top:1.75rem;font-size:1.15rem;font-weight:700;color:var(--navy);text-shadow:0 0 6px rgba(192,192,192,.28)}
         #loader{margin-top:.6rem;color:var(--gold)}
-        /* FIXED: Footer with solid navy background */
         footer{
             position: relative;
             width: 100%;
@@ -107,7 +103,6 @@
         .success-text { color: green; }
         .hidden { display: none !important; }
         
-        /* QR Display Styles */
         #qrDisplay {
             display: none;
             margin-top: 20px;
@@ -125,7 +120,6 @@
             color: #666;
         }
         
-        /* Verification Result Styles */
         .verification-result {
             margin-top: 15px;
             padding: 15px;
@@ -139,14 +133,12 @@
             border-left: 4px solid #ef4444;
         }
         
-        /* Section Divider */
         .section-divider {
             margin: 30px 0;
             border: 0;
             border-top: 1px dashed var(--silver);
         }
         
-        /* Input Styles */
         .cert-input {
             padding: 12px 16px;
             border: 1px solid var(--silver);
@@ -162,7 +154,6 @@
             border-color: var(--gold);
         }
         
-        /* Button Variants */
         .btn-primary {
             background: linear-gradient(90deg, #00ffaa, #00c6ff);
             color: var(--navy);
@@ -197,7 +188,6 @@
             background: #000060;
         }
         
-        /* Responsive adjustments */
         @media (max-width: 768px) {
             .container { 
                 padding: 2rem; 
@@ -263,7 +253,6 @@
             
             <div id="statusMessage" style="margin-top: 15px; font-weight: bold; color: var(--navy);" aria-live="polite"></div>
             
-            <!-- QR Code Display (shown after verification) -->
             <div id="qrDisplay">
                 <p>Scan to verify this certificate</p>
             </div>
