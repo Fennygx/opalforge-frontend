@@ -1,7 +1,6 @@
 // --- Configuration ---
 const WORKER_URL = 'https://api.opalforge.tech';
 const APP_URL = 'https://opalforge.tech';
-const MODEL_URL = './model/';
 
 // --- DOM Elements ---
 const output = document.getElementById('output');
@@ -19,73 +18,61 @@ const statusMessage = document.getElementById('statusMessage');
 // Initial State
 loader.style.display = 'none';
 let model = null;
-let currentConfidence = 0;
+let currentConfidence = 0; // This stores AUTHENTIC confidence for certificate logic
 let currentImageData = null;
 
-// --- Model Loading using Teachable Machine Library ---
+// --- Model Loading (matches Netlify version) ---
 
 async function loadModel() {
     loader.style.display = 'block';
-    output.textContent = 'Loading AI model...';
+    output.textContent = 'Loading model...';
     
     try {
-        const modelURL = MODEL_URL + 'model.json';
-        const metadataURL = MODEL_URL + 'metadata.json';
-        
-        // Use Teachable Machine library - handles preprocessing automatically
-        model = await tmImage.load(modelURL, metadataURL);
-        
-        console.log('Model loaded successfully via Teachable Machine library');
-        console.log('Total classes:', model.getTotalClasses());
-        
+        const m = await tf.loadLayersModel('./model/model.json');
+        model = m;
         loader.style.display = 'none';
         output.textContent = 'Ready. Upload an image.';
-        
+        console.log('Model loaded successfully');
     } catch (err) {
         console.error('Model loading error:', err);
         loader.style.display = 'none';
-        output.textContent = 'System Error: Model could not be loaded. Please refresh the page.';
+        output.textContent = 'Error loading model. Please refresh the page.';
     }
 }
 
-// --- Prediction Logic using Teachable Machine ---
+// --- Prediction Logic (matches Netlify version exactly) ---
 
 async function predictImage(imgElement) {
-    if (!model) {
-        throw new Error('Model not loaded');
-    }
-    
     try {
-        // Teachable Machine library handles all preprocessing automatically
-        const predictions = await model.predict(imgElement, false);
+        const imgTensor = tf.browser.fromPixels(imgElement);
+        const resized = tf.image.resizeBilinear(imgTensor, [224, 224]);
+        const normalized = resized.toFloat().div(255).expandDims(0);
+        const logits = model.predict(normalized);
+        const data = await logits.data();
         
-        console.log('Raw predictions:', predictions);
+        console.log('Raw prediction data:', data);
         
-        // Find the "Verified Authentic" prediction
-        let authenticProb = 0;
-        let replicaProb = 0;
+        // Model outputs: [Authentic probability, Replica probability]
+        // Index 0 = Authentic, Index 1 = Replica
+        const authenticProb = data[0];
+        const replicaProb = data[1];
         
-        for (const pred of predictions) {
-            console.log(`Class: ${pred.className}, Probability: ${pred.probability.toFixed(4)}`);
-            
-            if (pred.className.toLowerCase().includes('authentic')) {
-                authenticProb = pred.probability;
-            } else if (pred.className.toLowerCase().includes('replica') || pred.className.toLowerCase().includes('counterfeit')) {
-                replicaProb = pred.probability;
-            }
-        }
+        console.log(`Authentic: ${(authenticProb * 100).toFixed(2)}%, Replica: ${(replicaProb * 100).toFixed(2)}%`);
         
-        // Convert to percentage (0-100)
-        const confidence = authenticProb * 100;
+        // Clean up tensors
+        imgTensor.dispose();
+        resized.dispose();
+        normalized.dispose();
+        if (logits.dispose) logits.dispose();
         
-        console.log(`Authentic: ${authenticProb.toFixed(4)}, Replica: ${replicaProb.toFixed(4)}`);
-        console.log(`Final confidence: ${confidence.toFixed(1)}% authentic`);
-        
-        return confidence;
-        
-    } catch (err) {
-        console.error('Prediction error:', err);
-        throw err;
+        // Return both values
+        return {
+            authentic: authenticProb * 100,
+            replica: replicaProb * 100
+        };
+    } catch (e) {
+        console.error('Prediction error:', e);
+        throw e;
     }
 }
 
@@ -94,6 +81,7 @@ function showPreview(dataUrl) {
     imgPreview.innerHTML = '';
     const img = new Image();
     img.src = dataUrl;
+    img.alt = 'Uploaded preview';
     img.style.width = '100%';
     img.style.height = '100%';
     img.style.objectFit = 'cover';
@@ -118,7 +106,6 @@ async function mintCertificate() {
     mintButton.textContent = "Processing...";
 
     try {
-        // First, store the certificate in the database
         const storeResponse = await fetch(`${WORKER_URL}/certificate`, {
             method: 'POST',
             headers: {
@@ -137,9 +124,7 @@ async function mintCertificate() {
             throw new Error(`Failed to store certificate: ${storeResponse.status} - ${errText}`);
         }
 
-        // Then generate and download the PDF
         const pdfUrl = `${WORKER_URL}/certificate/${newCertId}/pdf?qrData=${encodeURIComponent(qrPayload)}&confidence=${currentConfidence.toFixed(1)}`;
-        
         const response = await fetch(pdfUrl, { method: 'GET' });
 
         if (response.ok) {
@@ -153,8 +138,6 @@ async function mintCertificate() {
             
             output.textContent = `Certificate Minted! ID: ${newCertId}`;
             statusMessage.innerHTML = `<span style="color: green;">✓ Download started. Certificate ID: <strong>${newCertId}</strong></span>`;
-            
-            // Show the certificate ID for user reference
             certIdInput.value = newCertId;
         } else {
             throw new Error(`PDF generation failed: ${response.status}`);
@@ -177,7 +160,6 @@ async function verifyCertificate(certId) {
         return;
     }
     
-    // Validate format
     if (!trimmedId.startsWith('OF-') || trimmedId.length < 5) {
         statusMessage.style.color = 'orange';
         statusMessage.textContent = 'Invalid certificate format. IDs start with "OF-"';
@@ -201,8 +183,6 @@ async function verifyCertificate(certId) {
                 Issued: ${data.timestamp ? new Date(data.timestamp).toLocaleDateString() : 'N/A'}
             `;
             output.textContent = "Certificate Verified";
-            
-            // Show QR code for the verified certificate
             displayVerificationQR(trimmedId);
         } else if (response.status === 404) {
             statusMessage.style.color = 'red';
@@ -242,37 +222,64 @@ uploadButton.addEventListener('click', () => fileInput.click());
 
 fileInput.addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
-    if (!file) return;
+    if (!file) {
+        output.textContent = 'No file selected.';
+        return;
+    }
+    if (!model) {
+        output.textContent = 'Model not loaded yet...';
+        return;
+    }
 
     loader.style.display = 'block';
-    output.textContent = 'Analyzing...';
+    output.textContent = 'Processing image...';
     resultAction.style.display = 'none';
 
     const reader = new FileReader();
     reader.onload = async (ev) => {
-        const img = showPreview(ev.target.result);
+        const dataUrl = ev.target.result;
+        const img = showPreview(dataUrl);
+        
         img.onload = async () => {
             try {
-                currentConfidence = await predictImage(img);
+                const result = await predictImage(img);
                 loader.style.display = 'none';
                 
-                if (currentConfidence >= 85) {
-                    output.innerHTML = `<span style="color:green">✓ Authentic (${currentConfidence.toFixed(1)}%)</span>`;
-                    resultAction.style.display = 'block';
-                } else if (currentConfidence >= 50) {
-                    output.innerHTML = `<span style="color:orange">⚠ Uncertain (${currentConfidence.toFixed(1)}%)</span>`;
-                    resultAction.style.display = 'none';
+                // Store authentic confidence for certificate minting
+                currentConfidence = result.authentic;
+                
+                // Display based on which is higher
+                if (result.authentic > result.replica) {
+                    // Item appears AUTHENTIC
+                    output.innerHTML = `<span style="color:green">✓ Authentic (${result.authentic.toFixed(1)}%)</span>`;
+                    if (result.authentic >= 85) {
+                        resultAction.style.display = 'block';
+                    } else {
+                        resultAction.style.display = 'none';
+                    }
                 } else {
-                    output.innerHTML = `<span style="color:red">✗ Potential Replica (${currentConfidence.toFixed(1)}%)</span>`;
+                    // Item appears to be REPLICA
+                    output.innerHTML = `<span style="color:red">✗ Potential Replica (${result.replica.toFixed(1)}%)</span>`;
                     resultAction.style.display = 'none';
                 }
             } catch (err) {
                 console.error('Analysis failed:', err);
                 loader.style.display = 'none';
-                output.innerHTML = `<span style="color:red">Analysis Error. Please try again.</span>`;
+                output.innerHTML = `<span style="color:red">Error processing image.</span>`;
             }
         };
+        
+        img.onerror = () => {
+            loader.style.display = 'none';
+            output.textContent = 'Error loading image.';
+        };
     };
+    
+    reader.onerror = () => {
+        loader.style.display = 'none';
+        output.textContent = 'Error reading file.';
+    };
+    
     reader.readAsDataURL(file);
 });
 
@@ -299,6 +306,3 @@ window.addEventListener('load', async () => {
         verifyCertificate(verifyId);
     }
 });
-
-// Mousemove glow effect - uses a separate overlay instead of changing body background
-// (Removed to fix white strip issue - the glow div already provides ambient effect)
